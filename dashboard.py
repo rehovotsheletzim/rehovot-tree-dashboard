@@ -50,17 +50,17 @@ with col_a:
             except subprocess.CalledProcessError:
                 status.update(label="העדכון נכשל - נשארים עם הנתונים הקיימים", state="error")
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    st.caption(f"עודכן לאחרונה: {file_updated_at(DATA_FILE) or 'לא זמין'}")
+#col1, col2 = st.columns([1, 1])
+#with col1:
+#    st.caption(f"עודכן לאחרונה: {file_updated_at(DATA_FILE) or 'לא זמין'}")
 
-with col2:
-    if st.button("עדכן עכשיו"):
-        # לנקות cache כדי שהפונקציה תרוץ שוב
-        load_or_update_data.clear()
-        # להריץ עדכון מחדש ואז reload
-        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
-        st.rerun()
+#with col2:
+#    if st.button("עדכן עכשיו"):
+#        # לנקות cache כדי שהפונקציה תרוץ שוב
+#        load_or_update_data.clear()
+#        # להריץ עדכון מחדש ואז reload
+#        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+#        st.rerun()
 
 # הצגת זמן עדכון אחרון
 if os.path.exists("latest_enriched.csv"):
