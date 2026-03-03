@@ -9,9 +9,30 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-
 path = "latest_enriched.csv" if os.path.exists("latest_enriched.csv") else "latest.csv"
-latest_df = pd.read_csv("latest_enriched.csv", dtype=str)
+#latest_df = pd.read_csv("latest_enriched.csv", dtype=str)
+DATA_FILE = "latest_enriched.csv"
+
+@st.cache_data(ttl=60*60)  # שעה
+def load_or_update_data():
+    # אם אין קובץ בכלל, נריץ עדכון פעם ראשונה
+    if not os.path.exists(DATA_FILE):
+        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+
+    # אם יש קובץ אבל הוא ריק/תקול, ננסה לייצר מחדש
+    try:
+        df = pd.read_csv(DATA_FILE, dtype=str)
+        if len(df) == 0:
+            raise ValueError("empty csv")
+        return df
+    except Exception:
+        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+        return pd.read_csv(DATA_FILE, dtype=str)
+
+def file_updated_at(path):
+    if not os.path.exists(path):
+        return None
+    return time.strftime("%d/%m/%Y %H:%M", time.localtime(os.path.getmtime(path)))
 
 st.set_page_config(page_title="רישיונות כריתה - רחובות", layout="wide")
 st.title("דשבורד רישיונות כריתה - רחובות")
@@ -28,6 +49,18 @@ with col_a:
                 st.rerun()
             except subprocess.CalledProcessError:
                 status.update(label="העדכון נכשל - נשארים עם הנתונים הקיימים", state="error")
+
+col1, col2 = st.columns([1, 1])
+with col1:
+    st.caption(f"עודכן לאחרונה: {file_updated_at(DATA_FILE) or 'לא זמין'}")
+
+with col2:
+    if st.button("עדכן עכשיו"):
+        # לנקות cache כדי שהפונקציה תרוץ שוב
+        load_or_update_data.clear()
+        # להריץ עדכון מחדש ואז reload
+        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+        st.rerun()
 
 # הצגת זמן עדכון אחרון
 if os.path.exists("latest_enriched.csv"):
@@ -54,7 +87,8 @@ def load_csv(path: str) -> pd.DataFrame:
     return df
 
 latest_path = files[-1]
-latest_df = load_csv(latest_path)
+#latest_df = load_csv(latest_path)
+latest_df = load_or_update_data()
 
 prev_path = files[-2] if len(files) >= 2 else None
 
