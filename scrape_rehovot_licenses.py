@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import json
 import fitz  # pymupdf
+import argparse
 
 URL = "https://www.rehovot.muni.il/429/"
 BASE = "https://www.rehovot.muni.il/"
@@ -245,8 +246,13 @@ def fetch_table() -> pd.DataFrame:
 def main():
     os.makedirs("snapshots", exist_ok=True)
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=120)
+    args = parser.parse_args()
+
     # מביאים את הטבלה מהאתר
     df = fetch_table()
+    df = df.head(args.limit)  # רק הכי חדשים לפי תאריך הדפסה
     #df = df.head(30)
 
     # טוענים snapshot קודם אם קיים

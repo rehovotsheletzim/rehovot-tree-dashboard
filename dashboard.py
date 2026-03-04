@@ -10,14 +10,15 @@ import numpy as np
 import pandas as pd
 
 path = "latest_enriched.csv" if os.path.exists("latest_enriched.csv") else "latest.csv"
-#latest_df = pd.read_csv("latest_enriched.csv", dtype=str)
+latest_df = pd.read_csv("latest_enriched.csv", dtype=str)
 DATA_FILE = "latest_enriched.csv"
 
 @st.cache_data(ttl=60*60)  # שעה
 def load_or_update_data():
     # אם אין קובץ בכלל, נריץ עדכון פעם ראשונה
     if not os.path.exists(DATA_FILE):
-        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+#       subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+        subprocess.run([sys.executable, "scrape_rehovot_licenses.py", "--limit", "150"], check=True)
 
     # אם יש קובץ אבל הוא ריק/תקול, ננסה לייצר מחדש
     try:
@@ -26,7 +27,8 @@ def load_or_update_data():
             raise ValueError("empty csv")
         return df
     except Exception:
-        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+#        subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+        subprocess.run([sys.executable, "scrape_rehovot_licenses.py", "--limit", "150"], check=True)
         return pd.read_csv(DATA_FILE, dtype=str)
 
 def file_updated_at(path):
