@@ -48,6 +48,7 @@ with col_a:
                 subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
                 status.update(label="העדכון הסתיים - טוען נתונים מחדש", state="complete")
                 time.sleep(1)
+                load_or_update_data.clear()
                 st.rerun()
             except subprocess.CalledProcessError:
                 status.update(label="העדכון נכשל - נשארים עם הנתונים הקיימים", state="error")

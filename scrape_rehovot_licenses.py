@@ -13,11 +13,22 @@ import argparse
 URL = "https://www.rehovot.muni.il/429/"
 BASE = "https://www.rehovot.muni.il/"
 
-def load_latest_enriched_snapshot() -> pd.DataFrame:
+def load_prev_baseline() -> pd.DataFrame:
+    # 1) baseline קבוע בריפו
+    if os.path.exists("latest_enriched.csv"):
+        try:
+            df = pd.read_csv("latest_enriched.csv", dtype=str)
+            if len(df) > 0:
+                return df
+        except Exception:
+            pass
+
+    # 2) fallback לסנאפשוטים
     files = sorted(glob.glob(os.path.join("snapshots", "rehovot_licenses_enriched_*.csv")))
-    if not files:
-        return pd.DataFrame()
-    return pd.read_csv(files[-1], dtype=str)
+    if files:
+        return pd.read_csv(files[-1], dtype=str)
+
+    return pd.DataFrame()
 
 def extract_pdf_text(pdf_url: str) -> tuple[str, str]:
     try:
@@ -252,11 +263,12 @@ def main():
 
     # מביאים את הטבלה מהאתר
     df = fetch_table()
+    
     df = df.head(args.limit)  # רק הכי חדשים לפי תאריך הדפסה
     #df = df.head(30)
 
     # טוענים snapshot קודם אם קיים
-    prev = load_latest_enriched_snapshot()
+    prev = load_prev_baseline()
 
     if not prev.empty and "row_id" in prev.columns:
         prev_ids = set(prev["row_id"].dropna().astype(str).tolist())
