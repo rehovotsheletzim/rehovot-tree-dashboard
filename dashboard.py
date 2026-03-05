@@ -53,6 +53,15 @@ with col_a:
             except subprocess.CalledProcessError:
                 status.update(label="העדכון נכשל - נשארים עם הנתונים הקיימים", state="error")
 
+# For Debug
+st.caption(f"שורות נטענו: {len(latest_df):,}")
+st.caption(f"פתוחים לערר: {(latest_df.get('סטטוס_ערר','') == 'אפשר להגיש ערר').sum() if 'סטטוס_ערר' in latest_df.columns else 'לא מחושב'}")
+st.caption(f"Data file: {DATA_FILE}")  
+nat_print = int(filtered["_print_dt"].isna().sum())
+nat_from = int(filtered["_from_dt"].isna().sum())
+st.caption(f"חסרים תאריך הדפסה: {nat_print} | חסרים מתאריך: {nat_from}")
+
+
 #col1, col2 = st.columns([1, 1])
 #with col1:
 #    st.caption(f"עודכן לאחרונה: {file_updated_at(DATA_FILE) or 'לא זמין'}")
@@ -223,6 +232,80 @@ if only_open and "סטטוס_ערר" in filtered.columns:
 today = pd.Timestamp.today().normalize()
 filtered["_print_dt"] = pd.to_datetime(filtered["_print_dt"], errors="coerce")
 new_today = int((filtered["_print_dt"].dt.normalize() == today).sum())
+
+st.subheader("גרפים")
+
+# לוודא שיש _print_dt
+if "_print_dt" not in filtered.columns:
+    filtered["_print_dt"] = pd.to_datetime(filtered.get("תאריך_הדפסה"), dayfirst=True, errors="coerce")
+
+# שנה
+filtered["_year"] = filtered["_print_dt"].dt.year
+
+# פונקציה לסכימת מספרי עצים מתוך תא כמו "4\n2\n1"
+def sum_tree_counts(cell) -> int:
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return 0
+    total = 0
+    for part in str(cell).split("\n"):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            total += int(part)
+        except Exception:
+            pass
+    return total
+
+# לחשב לכל רישיון כמה עצים יש בו
+filtered["_trees_in_license"] = filtered.get("מספרי_עצים", pd.Series([""] * len(filtered))).apply(sum_tree_counts)
+
+# לסווג לפי מהות הבקשה
+req = filtered.get("מהות הבקשה", pd.Series([""] * len(filtered))).astype(str)
+
+filtered["_trees_cut"] = filtered["_trees_in_license"].where(req.str.contains("כריתה", na=False), 0)
+filtered["_trees_move"] = filtered["_trees_in_license"].where(req.str.contains("העתקה", na=False), 0)
+
+# להשמיט שורות בלי שנה
+gdf = filtered.dropna(subset=["_year"]).copy()
+gdf["_year"] = gdf["_year"].astype(int)
+
+# טבלת סיכום שנתית
+yearly = (
+    gdf.groupby("_year")
+    .agg(
+        licenses=("row_id", "count") if "row_id" in gdf.columns else ("_year", "count"),
+        trees_cut=("_trees_cut", "sum"),
+        trees_move=("_trees_move", "sum"),
+        trees_total=("_trees_in_license", "sum"),
+        open_for_appeal=("סטטוס_ערר", lambda s: int((s == "אפשר להגיש ערר").sum())) if "סטטוס_ערר" in gdf.columns else ("_year", "size"),
+    )
+    .reset_index()
+    .rename(columns={"_year": "year"})
+    .sort_values("year")
+)
+
+# גרף 1: רישיונות לפי שנה
+st.markdown("### רישיונות לפי שנה")
+st.bar_chart(yearly.set_index("year")[["licenses"]])
+
+# גרף 2: עצים לפי שנה
+st.markdown("### עצים לפי שנה")
+st.bar_chart(yearly.set_index("year")[["trees_cut", "trees_move"]])
+
+# גרף 3: סהכ עצים לפי שנה (אופציונלי)
+st.markdown("### סהכ עצים לפי שנה")
+st.line_chart(yearly.set_index("year")[["trees_total"]])
+
+# טבלה להורדה
+with st.expander("טבלת סיכום שנתית"):
+    st.dataframe(yearly, use_container_width=True, hide_index=True)
+    st.download_button(
+        "הורדת CSV",
+        data=yearly.to_csv(index=False).encode("utf-8-sig"),
+        file_name="rehovot_yearly_summary.csv",
+        mime="text/csv",
+    )
 
 bad_pdf = 0
 if "pdf_status" in filtered.columns:

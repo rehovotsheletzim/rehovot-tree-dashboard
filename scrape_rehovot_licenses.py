@@ -263,7 +263,6 @@ def main():
 
     # מביאים את הטבלה מהאתר
     df = fetch_table()
-    
     df = df.head(args.limit)  # רק הכי חדשים לפי תאריך הדפסה
     #df = df.head(30)
 
