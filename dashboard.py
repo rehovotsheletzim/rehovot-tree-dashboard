@@ -8,9 +8,10 @@ import time
 from datetime import datetime
 import numpy as np
 import pandas as pd
+import plotly.express as px
 
 path = "latest_enriched.csv" if os.path.exists("latest_enriched.csv") else "latest.csv"
-latest_df = pd.read_csv("latest_enriched.csv", dtype=str)
+# latest_df = pd.read_csv("latest_enriched.csv", dtype=str)
 DATA_FILE = "latest_enriched.csv"
 
 @st.cache_data(ttl=60*60)  # שעה
@@ -42,25 +43,23 @@ st.title("דשבורד רישיונות כריתה - רחובות")
 col_a, col_b = st.columns([1, 4])
 
 with col_a:
+    full_refresh = st.checkbox("רענון מלא (איטי יותר)", value=False)
+    
     if st.button("עדכן עכשיו"):
+        mode = "full" if full_refresh else "delta"
         with st.status("מעדכן נתונים מהאתר (רק רישיונות חדשים)...", expanded=True) as status:
             try:
-                subprocess.run([sys.executable, "scrape_rehovot_licenses.py"], check=True)
+                subprocess.run(
+                        [sys.executable, "scrape_rehovot_licenses.py", "--mode", mode],
+                        check=True
+                    )
+
                 status.update(label="העדכון הסתיים - טוען נתונים מחדש", state="complete")
                 time.sleep(1)
                 load_or_update_data.clear()
                 st.rerun()
             except subprocess.CalledProcessError:
                 status.update(label="העדכון נכשל - נשארים עם הנתונים הקיימים", state="error")
-
-# For Debug
-st.caption(f"שורות נטענו: {len(latest_df):,}")
-st.caption(f"פתוחים לערר: {(latest_df.get('סטטוס_ערר','') == 'אפשר להגיש ערר').sum() if 'סטטוס_ערר' in latest_df.columns else 'לא מחושב'}")
-st.caption(f"Data file: {DATA_FILE}")  
-nat_print = int(filtered["_print_dt"].isna().sum())
-nat_from = int(filtered["_from_dt"].isna().sum())
-st.caption(f"חסרים תאריך הדפסה: {nat_print} | חסרים מתאריך: {nat_from}")
-
 
 #col1, col2 = st.columns([1, 1])
 #with col1:
@@ -101,6 +100,8 @@ def load_csv(path: str) -> pd.DataFrame:
 latest_path = files[-1]
 #latest_df = load_csv(latest_path)
 latest_df = load_or_update_data()
+
+latest_df = latest_df.astype("string").replace({pd.NA:""})
 
 prev_path = files[-2] if len(files) >= 2 else None
 
@@ -233,16 +234,22 @@ today = pd.Timestamp.today().normalize()
 filtered["_print_dt"] = pd.to_datetime(filtered["_print_dt"], errors="coerce")
 new_today = int((filtered["_print_dt"].dt.normalize() == today).sum())
 
+# For Debug
+st.caption(f"שורות נטענו: {len(latest_df):,}")
+st.caption(f"פתוחים לערר: {(latest_df.get('סטטוס_ערר','') == 'אפשר להגיש ערר').sum() if 'סטטוס_ערר' in latest_df.columns else 'לא מחושב'}")
+st.caption(f"Data file: {DATA_FILE}")  
+nat_print = int(filtered["_print_dt"].isna().sum())
+nat_from = int(filtered["_from_dt"].isna().sum())
+st.caption(f"חסרים תאריך הדפסה: {nat_print} | חסרים מתאריך: {nat_from}")
+
 st.subheader("גרפים")
 
-# לוודא שיש _print_dt
+# לוודא שיש תאריך הדפסה מפורסר
 if "_print_dt" not in filtered.columns:
     filtered["_print_dt"] = pd.to_datetime(filtered.get("תאריך_הדפסה"), dayfirst=True, errors="coerce")
 
-# שנה
 filtered["_year"] = filtered["_print_dt"].dt.year
 
-# פונקציה לסכימת מספרי עצים מתוך תא כמו "4\n2\n1"
 def sum_tree_counts(cell) -> int:
     if cell is None or (isinstance(cell, float) and pd.isna(cell)):
         return 0
@@ -257,20 +264,15 @@ def sum_tree_counts(cell) -> int:
             pass
     return total
 
-# לחשב לכל רישיון כמה עצים יש בו
 filtered["_trees_in_license"] = filtered.get("מספרי_עצים", pd.Series([""] * len(filtered))).apply(sum_tree_counts)
 
-# לסווג לפי מהות הבקשה
 req = filtered.get("מהות הבקשה", pd.Series([""] * len(filtered))).astype(str)
-
 filtered["_trees_cut"] = filtered["_trees_in_license"].where(req.str.contains("כריתה", na=False), 0)
 filtered["_trees_move"] = filtered["_trees_in_license"].where(req.str.contains("העתקה", na=False), 0)
 
-# להשמיט שורות בלי שנה
 gdf = filtered.dropna(subset=["_year"]).copy()
 gdf["_year"] = gdf["_year"].astype(int)
 
-# טבלת סיכום שנתית
 yearly = (
     gdf.groupby("_year")
     .agg(
@@ -278,7 +280,6 @@ yearly = (
         trees_cut=("_trees_cut", "sum"),
         trees_move=("_trees_move", "sum"),
         trees_total=("_trees_in_license", "sum"),
-        open_for_appeal=("סטטוס_ערר", lambda s: int((s == "אפשר להגיש ערר").sum())) if "סטטוס_ערר" in gdf.columns else ("_year", "size"),
     )
     .reset_index()
     .rename(columns={"_year": "year"})
@@ -286,26 +287,184 @@ yearly = (
 )
 
 # גרף 1: רישיונות לפי שנה
-st.markdown("### רישיונות לפי שנה")
-st.bar_chart(yearly.set_index("year")[["licenses"]])
+fig_licenses = px.bar(
+    yearly,
+    x="year",
+    y="licenses",
+    title="רישיונות לפי שנה",
+    labels={"year": "שנה", "licenses": "מספר רישיונות"},
+)
+fig_licenses.update_xaxes(type='category')
+fig_licenses.update_traces(hovertemplate="שנה: %{x}<br>רישיונות: %{y}<extra></extra>")
 
-# גרף 2: עצים לפי שנה
-st.markdown("### עצים לפי שנה")
-st.bar_chart(yearly.set_index("year")[["trees_cut", "trees_move"]])
+# גרף 2: עצים לכריתה ולהעתקה לפי שנה (stacked)
+yearly_long = yearly.melt(
+    id_vars=["year"],
+    value_vars=["trees_cut", "trees_move"],
+    var_name="type",
+    value_name="trees",
+)
+type_map = {"trees_cut": "עצים לכריתה", "trees_move": "עצים להעתקה"}
+yearly_long["type"] = yearly_long["type"].map(type_map)
 
-# גרף 3: סהכ עצים לפי שנה (אופציונלי)
-st.markdown("### סהכ עצים לפי שנה")
-st.line_chart(yearly.set_index("year")[["trees_total"]])
+fig_trees = px.bar(
+    yearly_long,
+    x="year",
+    y="trees",
+    color="type",
+    barmode="stack",
+    title="עצים לפי שנה - כריתה מול העתקה",
+    labels={"year": "שנה", "trees": "מספר עצים", "type": "סוג"},
+)
+fig_trees.update_traces(hovertemplate="שנה: %{x}<br>עצים: %{y}<br>%{legendgroup}<extra></extra>")
+fig_trees.update_xaxes(type='category')
 
-# טבלה להורדה
-with st.expander("טבלת סיכום שנתית"):
-    st.dataframe(yearly, use_container_width=True, hide_index=True)
-    st.download_button(
-        "הורדת CSV",
-        data=yearly.to_csv(index=False).encode("utf-8-sig"),
-        file_name="rehovot_yearly_summary.csv",
-        mime="text/csv",
+col1, col2 = st.columns(2)
+
+with col1:
+    st.plotly_chart(fig_licenses, use_container_width=True)
+
+with col2:
+    st.plotly_chart(fig_trees, use_container_width=True)
+
+# גרף 3: סהכ עצים לפי שנה (קו)
+fig_total = px.line(
+    yearly,
+    x="year",
+    y="trees_total",
+    markers=True,
+    title='סה"כ עצים לפי שנה',
+    labels={"year": "שנה", "trees_total": "סהכ עצים"},
+)
+fig_total.update_traces(hovertemplate="שנה: %{x}<br>סהכ עצים: %{y}<extra></extra>")
+fig_total.update_xaxes(type='category')
+
+# גרף 4
+st.subheader("עצים לפי חודש (1-12) בהשוואה בין שנים")
+
+# לוודא שיש תאריך הדפסה
+if "_print_dt" not in filtered.columns:
+    filtered["_print_dt"] = pd.to_datetime(filtered.get("תאריך_הדפסה"), dayfirst=True, errors="coerce")
+
+def sum_tree_counts(cell) -> int:
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return 0
+    total = 0
+    for part in str(cell).split("\n"):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            total += int(part)
+        except Exception:
+            pass
+    return total
+
+# כמה עצים ברישיון
+filtered["_trees_in_license"] = filtered.get("מספרי_עצים", pd.Series([""] * len(filtered))).apply(sum_tree_counts)
+
+req = filtered.get("מהות הבקשה", pd.Series([""] * len(filtered))).astype(str)
+filtered["_trees_cut"] = filtered["_trees_in_license"].where(req.str.contains("כריתה", na=False), 0)
+filtered["_trees_move"] = filtered["_trees_in_license"].where(req.str.contains("העתקה", na=False), 0)
+
+m = filtered.dropna(subset=["_print_dt"]).copy()
+m["year"] = m["_print_dt"].dt.year.astype(int)
+m["month"] = m["_print_dt"].dt.month.astype(int)
+
+
+col1, col2 = st.columns(2)
+
+with col2:
+    metric = st.radio(
+        "מה להציג?",
+        options=["סהכ עצים", "עצים לכריתה", "עצים להעתקה"],
+        horizontal=True,
+        index=0,
     )
+
+col_map = {
+    "סהכ עצים": "_trees_in_license",
+    "עצים לכריתה": "_trees_cut",
+    "עצים להעתקה": "_trees_move",
+}
+value_col = col_map[metric]
+
+# 1) סיכום עצים לפי שנה וחודש
+monthly_by_year = (
+    m.groupby(["year", "month"])
+    .agg(trees=(value_col, "sum"))
+    .reset_index()
+)
+
+# 2) להשלים חודשים חסרים כדי שכל שנה תופיע בכל 12 החודשים
+years = sorted(monthly_by_year["year"].unique().tolist())
+all_pairs = pd.MultiIndex.from_product(
+    [years, list(range(1, 13))],
+    names=["year", "month"]
+).to_frame(index=False)
+
+monthly_by_year = (
+    all_pairs
+    .merge(monthly_by_year, on=["year", "month"], how="left")
+    .fillna({"trees": 0})
+)
+
+# 3) month כקטגוריה 1..12
+monthly_by_year["year"] = monthly_by_year["year"].astype(str)
+monthly_by_year["month"] = monthly_by_year["month"].astype(str)
+
+fig = px.bar(
+    monthly_by_year,
+    x="month",
+    y="trees",
+    color="year",
+    barmode="group",  # שנים אחת ליד השניה
+    title=f"{metric} לפי חודש (1-12) בהשוואה בין שנים",
+    labels={"month": "חודש", "trees": "מספר עצים", "year": "שנה"},
+)
+
+fig.update_xaxes(
+    type="category",
+    categoryorder="array",
+    categoryarray=[str(i) for i in range(1, 13)],
+)
+
+fig.update_layout(bargap=0.2)
+fig.update_layout(bargroupgap=0.05)
+
+
+col1, col2 = st.columns(2)
+
+with col1: 
+    st.plotly_chart(fig_total, use_container_width=True)
+    with st.expander("טבלת סיכום שנתית"):
+        st.dataframe(yearly, use_container_width=True, hide_index=True)
+        st.download_button(
+            "הורדת CSV",
+            data=yearly.to_csv(index=False).encode("utf-8-sig"),
+            file_name="rehovot_yearly_summary.csv",
+            mime="text/csv",
+        )
+
+
+
+with col2:
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("טבלת סיכום חודשית לפי שנה"):
+        pivot = monthly_by_year.pivot(index="month", columns="year", values="trees").reset_index()
+        st.dataframe(pivot, use_container_width=True, hide_index=True)
+        st.download_button(
+            "הורדת CSV (חודש-שנה)",
+            data=pivot.to_csv(index=False).encode("utf-8-sig"),
+            file_name="rehovot_month_by_year.csv",
+            mime="text/csv",
+            key="download_month_by_year",
+        )
+
+
+
+
+
 
 bad_pdf = 0
 if "pdf_status" in filtered.columns:
@@ -459,8 +618,10 @@ else:
     new_rows = latest_df[~latest_df["row_id"].isin(set(old_df["row_id"].tolist()))].copy()
 
     st.write(f"נמצאו {len(new_rows)} רשומות חדשות.")
+    show_cols_new = [c for c in show_cols if c in new_rows.columns]
+
     st.dataframe(
-        new_rows[show_cols],
+        new_rows[show_cols_new],
         use_container_width=True,
         hide_index=True,
 )
